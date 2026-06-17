@@ -52,3 +52,12 @@ catalogs/normalized/*.gpkg
 *.tar
 *.tar.gz
 *.7z
+.venv/
+data/raw/
+data/processed/
+outputs/
+catalogs/normalized/
+__pycache__/
+*.pyc
+*.gpkg-shm
+*.gpkg-wal
