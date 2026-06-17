@@ -1,0 +1,39 @@
+project:
+  name: treequake
+  version: 0.1.0
+
+earthquakes:
+  catalog: usgs_comcat
+  min_magnitude: 5.5
+  start_year: 1000
+  end_year: 2026
+  radii_km: [25, 50, 75, 100, 150, 200]
+
+tree_rings:
+  provider: itrdb
+  download_all_associated_files: true
+  analyze_rwl_only_initially: true
+  min_trees_required: 5
+  pre_window_years: 10
+  post_window_years: 10
+
+suppression:
+  methods:
+    - proportion_70
+    - empirical_ratio
+    - onset_year
+  proportion_threshold: 0.70
+  empirical_p_threshold: 0.05
+  onset_allowed_lag_years: [0, 1]
+
+plots:
+  show_in_rstudio_pane: true
+  save_png: true
+  individual_raw_tree_panels: true
+  individual_rwi_tree_panels: true
+  master_chronology: true
+
+reproducibility:
+  preserve_raw_downloads: true
+  log_failures: true
+  overwrite_existing_downloads: false

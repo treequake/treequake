@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: TREEQUAKE
+message: "If you use TREEQUAKE, please cite the software and the source datasets used in your analysis."
+type: software
+authors:
+  - family-names: Taylor
+    given-names: EJ
+version: 0.1.0
+date-released: 2026-01-01
+license: MIT
