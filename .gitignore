@@ -41,19 +41,14 @@ data/raw/
 data/private/
 data/external/private/
 
+# Local workflow/private notes
+metadata explanation of workflow.odt
+
+# Generated geospatial outputs
+catalogs/normalized/*.gpkg
+
 # Archives
 *.zip
 *.tar
 *.tar.gz
 *.7z
-
-# Geospatial data (keep private unless intentionally public)
-*.gpkg
-*.shp
-*.shx
-*.dbf
-*.prj
-*.cpg
-*.qix
-*.sbn
-*.sbx
