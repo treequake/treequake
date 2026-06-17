@@ -1,0 +1,134 @@
+--- scripts/python/spatial/match_tree_sites_to_features.py	2026-06-17 13:56:13.034656596 +0000
++++ scripts/python/spatial/match_tree_sites_to_features.py	2026-06-17 14:30:35.902411904 +0000
+@@ -108,13 +108,96 @@
+ 
+ def utm_crs_for_geometry(CRS, geometry) -> str:
+     centroid = geometry.centroid
+-    lon = centroid.x
++    lon = ((centroid.x + 180) % 360) - 180
+     lat = centroid.y
+     zone = int((lon + 180) // 6) + 1
++    zone = max(1, min(60, zone))
+     epsg = 32600 + zone if lat >= 0 else 32700 + zone
+     return CRS.from_epsg(epsg).to_string()
+ 
+ 
++def unwrap_antimeridian_geometry(geometry):
++    """Make dateline-crossing coordinate sequences continuous before projection."""
++    if geometry is None or geometry.is_empty:
++        return geometry
++
++    minx, _, maxx, _ = geometry.bounds
++    if maxx - minx <= 180:
++        return geometry
++
++    try:
++        from shapely.ops import transform
++    except ImportError:
++        return geometry
++
++    def shift_negative_longitudes(x, y, z=None):
++        shifted_x = x + 360 if x < 0 else x
++        return (shifted_x, y) if z is None else (shifted_x, y, z)
++
++    return transform(shift_negative_longitudes, geometry)
++
++
++def repair_antimeridian_polygon(geometry):
++    """Split dateline-spanning WGS84 polygons so they do not cover the world."""
++    if geometry is None or geometry.is_empty:
++        return geometry
++
++    minx, _, maxx, _ = geometry.bounds
++    if maxx - minx <= 180:
++        return geometry
++
++    try:
++        from shapely.geometry import LineString, MultiPolygon
++        from shapely.ops import split, transform
++    except ImportError:
++        return geometry
++
++    def shift_negative_longitudes(x, y, z=None):
++        shifted_x = x + 360 if x < 0 else x
++        return (shifted_x, y) if z is None else (shifted_x, y, z)
++
++    def restore_longitudes(x, y, z=None):
++        restored_x = x - 360 if x > 180 else x
++        return (restored_x, y) if z is None else (restored_x, y, z)
++
++    shifted = transform(shift_negative_longitudes, geometry)
++    if shifted.is_empty:
++        return geometry
++
++    splitter = LineString([(180, -90), (180, 90)])
++    try:
++        parts = list(split(shifted, splitter).geoms)
++    except Exception:
++        parts = [shifted]
++
++    restored_parts = []
++    for part in parts:
++        if part.is_empty:
++            continue
++        restored = transform(restore_longitudes, part)
++        if restored.is_empty:
++            continue
++        if restored.geom_type == "Polygon":
++            restored_parts.append(restored)
++        elif restored.geom_type == "MultiPolygon":
++            restored_parts.extend([piece for piece in restored.geoms if not piece.is_empty])
++
++    if not restored_parts:
++        return geometry
++    if len(restored_parts) == 1:
++        return restored_parts[0]
++    return MultiPolygon(restored_parts)
++
++
++def is_world_width_thin_artifact(geometry) -> bool:
++    if geometry is None or geometry.is_empty:
++        return False
++    minx, miny, maxx, maxy = geometry.bounds
++    width = maxx - minx
++    height = maxy - miny
++    return width > 300 and height < 5
++
++
+ def build_analysis_polygons(gpd, CRS, features, buffer_km: float, polygon_buffer: bool):
+     buffer_m = buffer_km * 1000.0
+     rows = []
+@@ -141,6 +224,9 @@
+         should_buffer = geometry_type in {"point", "line"} or (
+             geometry_type == "polygon" and polygon_buffer
+         )
++        if geometry_type in {"line", "polygon"}:
++            geom = unwrap_antimeridian_geometry(geom)
++
+         projected_crs = utm_crs_for_geometry(CRS, geom)
+         one_feature = gpd.GeoDataFrame([row.drop(labels="geometry")], geometry=[geom], crs=WGS84)
+         projected = one_feature.to_crs(projected_crs)
+@@ -170,8 +256,23 @@
+     polygon_frames = []
+     for output_row, geom, projected_crs in rows:
+         frame = gpd.GeoDataFrame([output_row], geometry=[geom], crs=projected_crs).to_crs(WGS84)
++        frame["geometry"] = frame.geometry.map(repair_antimeridian_polygon)
++        artifact_mask = frame.geometry.map(is_world_width_thin_artifact)
++        if artifact_mask.any():
++            feature_index = output_row.get("feature_index", "unknown")
++            print(f"Skipping antimeridian artifact analysis polygon for feature_index={feature_index}")
++            frame = frame.loc[~artifact_mask].copy()
++        if frame.empty:
++            continue
+         polygon_frames.append(frame)
+ 
++    if not polygon_frames:
++        return gpd.GeoDataFrame(
++            columns=["feature_index", "analysis_geometry_type", "buffer_km", "analysis_crs", "geometry"],
++            geometry="geometry",
++            crs=WGS84,
++        )
++
+     return pd.concat(polygon_frames, ignore_index=True).pipe(
+         lambda df: gpd.GeoDataFrame(df, geometry="geometry", crs=WGS84)
+     )

@@ -1,0 +1,425 @@
+--- /mnt/data/match_tree_sites_to_features(1).py	2026-06-17 13:38:03.351683310 +0000
++++ /mnt/data/match_tree_sites_to_features_phase_c1.py	2026-06-17 13:40:43.003673493 +0000
+@@ -5,6 +5,7 @@
+ 
+ import argparse
+ import json
++import re
+ from datetime import datetime
+ from pathlib import Path
+ from typing import Iterable
+@@ -183,6 +184,343 @@
+     return None
+ 
+ 
++
++
++
++def clean_text(value) -> str | None:
++    if pd.isna(value):
++        return None
++    text = str(value).strip()
++    if not text or text.lower() in {"nan", "none", "<na>", "-------------"}:
++        return None
++    return text
++
++
++def lower_clean_text(value) -> str | None:
++    text = clean_text(value)
++    return text.lower() if text is not None else None
++
++
++def infer_site_code_base(value) -> str | None:
++    """Return the stable alphanumeric site-code stem, preserving nonmatching codes."""
++    text = lower_clean_text(value)
++    if text is None:
++        return None
++    match = re.match(r"^([a-z]+[0-9]+)", text)
++    return match.group(1) if match else text
++
++
++def unique_clean_values(series: pd.Series) -> list[str]:
++    values = [clean_text(value) for value in series.dropna()]
++    return sorted({value for value in values if value is not None})
++
++
++def unique_normalized_values(series: pd.Series) -> set[str]:
++    return {value for value in (lower_clean_text(value) for value in series.dropna()) if value is not None}
++
++
++def first_clean_value(series: pd.Series) -> str | None:
++    for value in series:
++        text = clean_text(value)
++        if text is not None:
++            return text
++    return None
++
++
++def numeric_min(series: pd.Series):
++    value = pd.to_numeric(series, errors="coerce").min()
++    return None if pd.isna(value) else value
++
++
++def numeric_max(series: pd.Series):
++    value = pd.to_numeric(series, errors="coerce").max()
++    return None if pd.isna(value) else value
++
++
++def bool_any(series: pd.Series) -> bool:
++    if series.empty:
++        return False
++    return bool(series.fillna(False).astype(bool).any())
++
++
++def count_product_type(products: pd.DataFrame, product_type: str) -> int:
++    if products.empty or "product_type" not in products.columns:
++        return 0
++    return int(products["product_type"].fillna("").astype(str).str.lower().eq(product_type).sum())
++
++
++def joined_unique(values: list[str], limit: int = 12) -> str:
++    if not values:
++        return ""
++    shown = values[:limit]
++    suffix = f"; ... (+{len(values) - limit} more)" if len(values) > limit else ""
++    return "; ".join(shown) + suffix
++
++
++def build_physical_site_id_map(site_rows: pd.DataFrame, site_key: str) -> tuple[dict[str, str], list[str]]:
++    """Build a parser-assisted physical-site map from matched site rows.
++
++    The parser-derived root_site_code_guess is the starting point, but product
++    suffixes such as ital012e/ital012ea are collapsed only when the parsed site
++    attributes support a shared physical location.
++    """
++    if site_key not in site_rows.columns:
++        return {}, [f"missing required site key column: {site_key}"]
++
++    reference = site_rows.copy()
++    reference[site_key] = reference[site_key].map(lower_clean_text)
++    reference = reference[reference[site_key].notna()].copy()
++    if reference.empty:
++        return {}, ["no matched rows with non-empty site key"]
++
++    reference["_candidate_physical_site_id"] = reference[site_key].map(infer_site_code_base)
++    mapping: dict[str, str] = {}
++    ambiguities: list[str] = []
++
++    name_column = first_existing_column(reference, ["representative_site_name", "site_name", "site_name_site"])
++    country_column = first_existing_column(reference, ["country", "country_site", "location", "location_site"])
++    latitude_column = first_existing_column(reference, ["latitude", "latitude_site"])
++    longitude_column = first_existing_column(reference, ["longitude", "longitude_site"])
++
++    for candidate_id, group in reference.groupby("_candidate_physical_site_id", dropna=True):
++        codes = sorted(group[site_key].dropna().astype(str).unique())
++        if len(codes) == 1:
++            mapping[codes[0]] = codes[0]
++            continue
++
++        names = unique_clean_values(group[name_column]) if name_column else []
++        normalized_names = unique_normalized_values(group[name_column]) if name_column else set()
++        countries = unique_clean_values(group[country_column]) if country_column else []
++        normalized_countries = unique_normalized_values(group[country_column]) if country_column else set()
++        latitudes = pd.to_numeric(group[latitude_column], errors="coerce") if latitude_column else pd.Series(dtype=float)
++        longitudes = pd.to_numeric(group[longitude_column], errors="coerce") if longitude_column else pd.Series(dtype=float)
++
++        coordinate_signal = False
++        coordinate_ambiguous = False
++        if not latitudes.dropna().empty and not longitudes.dropna().empty:
++            lat_range = float(latitudes.max() - latitudes.min())
++            lon_range = float(longitudes.max() - longitudes.min())
++            coordinate_signal = lat_range <= 0.01 and lon_range <= 0.01
++            coordinate_ambiguous = lat_range > 0.05 or lon_range > 0.05
++
++        name_signal = len(normalized_names) == 1
++        should_collapse = coordinate_signal or name_signal
++
++        if should_collapse:
++            for code in codes:
++                mapping[code] = str(candidate_id)
++            if len(normalized_names) > 1:
++                ambiguities.append(
++                    f"physical_site_id={candidate_id}: collapsed {len(codes)} product/site codes with multiple parsed names: {joined_unique(names)}"
++                )
++            if len(normalized_countries) > 1:
++                ambiguities.append(
++                    f"physical_site_id={candidate_id}: collapsed {len(codes)} product/site codes with multiple parsed country/location values: {joined_unique(countries)}"
++                )
++            if coordinate_ambiguous:
++                ambiguities.append(
++                    f"physical_site_id={candidate_id}: collapsed {len(codes)} product/site codes with coordinate spread >0.05 degrees"
++                )
++        else:
++            for code in codes:
++                mapping[code] = code
++            ambiguities.append(
++                f"candidate_physical_site_id={candidate_id}: not collapsed because parsed names/coordinates did not support a shared physical location; codes={joined_unique(codes)}"
++            )
++
++    return mapping, ambiguities
++
++
++def write_physical_site_outputs(
++    tables_dir: Path,
++    matches: pd.DataFrame,
++    matched_products: pd.DataFrame,
++    site_key: str,
++) -> dict[str, object]:
++    physical_sites_csv = tables_dir / "matched_physical_sites.csv"
++    physical_summary_csv = tables_dir / "matched_physical_site_summary.csv"
++
++    if site_key not in matches.columns:
++        empty_sites = pd.DataFrame(
++            columns=[
++                "physical_site_id",
++                "representative_site_name",
++                "country",
++                "latitude",
++                "longitude",
++                "n_product_records",
++                "n_rwl_products",
++                "n_crn_products",
++                "has_rwl",
++                "has_crn",
++                "first_year_min",
++                "last_year_max",
++                "min_distance_to_feature_km",
++                "source_scope",
++                "source_name",
++            ]
++        )
++        empty_sites.to_csv(physical_sites_csv, index=False, encoding="utf-8")
++        pd.DataFrame(
++            [
++                {"metric": "total matched product records", "value": int(len(matched_products))},
++                {"metric": "total matched physical locations", "value": 0},
++                {"metric": "physical locations with RWL", "value": 0},
++                {"metric": "physical locations with CRN", "value": 0},
++                {"metric": "aggregation ambiguities", "value": 1},
++            ]
++        ).to_csv(physical_summary_csv, index=False, encoding="utf-8")
++        return {
++            "total_matched_product_records": int(len(matched_products)),
++            "total_matched_physical_locations": 0,
++            "physical_locations_with_rwl": 0,
++            "physical_locations_with_crn": 0,
++            "physical_site_country_counts": "",
++            "physical_site_ambiguities": f"missing required site key column: {site_key}",
++            "physical_site_ambiguity_count": 1,
++        }
++
++    matched_site_rows = matches.drop(columns="geometry", errors="ignore").copy()
++    mapping, ambiguities = build_physical_site_id_map(matched_site_rows, site_key)
++
++    matched_site_rows["_site_key_clean"] = matched_site_rows[site_key].map(lower_clean_text)
++    matched_site_rows["physical_site_id"] = matched_site_rows["_site_key_clean"].map(mapping)
++    missing_physical_ids = int(matched_site_rows["physical_site_id"].isna().sum())
++    if missing_physical_ids:
++        ambiguities.append(f"{missing_physical_ids} matched site-feature rows could not be assigned a physical_site_id")
++
++    products = matched_products.copy()
++    if site_key in products.columns:
++        products["_site_key_clean"] = products[site_key].map(lower_clean_text)
++        products["physical_site_id"] = products["_site_key_clean"].map(mapping)
++        fallback_mask = products["physical_site_id"].isna() & products["_site_key_clean"].notna()
++        if fallback_mask.any():
++            products.loc[fallback_mask, "physical_site_id"] = products.loc[fallback_mask, "_site_key_clean"].map(infer_site_code_base)
++            ambiguities.append(
++                f"{int(fallback_mask.sum())} matched product rows used regex fallback because no matched-site mapping was available"
++            )
++    else:
++        products["physical_site_id"] = pd.Series(dtype=object)
++        ambiguities.append(f"matched products lack required site key column: {site_key}")
++
++    country_column = first_existing_column(matched_site_rows, ["country", "country_site", "location", "location_site"])
++    name_column = first_existing_column(matched_site_rows, ["representative_site_name", "site_name", "site_name_site"])
++    latitude_column = first_existing_column(matched_site_rows, ["latitude", "latitude_site"])
++    longitude_column = first_existing_column(matched_site_rows, ["longitude", "longitude_site"])
++    first_year_column = first_existing_column(matched_site_rows, ["first_year_min", "first_year_min_site"])
++    last_year_column = first_existing_column(matched_site_rows, ["last_year_max", "last_year_max_site"])
++    distance_column = first_existing_column(matched_site_rows, ["distance_to_feature_km", "min_distance_to_feature_km"])
++    source_scope_column = first_existing_column(matched_site_rows, ["source_scope", "source_scope_feature"])
++    source_name_column = first_existing_column(matched_site_rows, ["source_name", "source_name_feature"])
++
++    physical_rows = []
++    valid_site_rows = matched_site_rows[matched_site_rows["physical_site_id"].notna()].copy()
++    for physical_site_id, group in valid_site_rows.groupby("physical_site_id", dropna=True):
++        product_group = products.loc[products["physical_site_id"].eq(physical_site_id)].copy()
++        source_scopes = unique_clean_values(group[source_scope_column]) if source_scope_column else []
++        source_names = unique_clean_values(group[source_name_column]) if source_name_column else []
++        countries = unique_clean_values(group[country_column]) if country_column else []
++        names = unique_clean_values(group[name_column]) if name_column else []
++
++        if len({value.lower() for value in countries}) > 1:
++            ambiguities.append(
++                f"physical_site_id={physical_site_id}: multiple country/location values in matched rows: {joined_unique(countries)}"
++            )
++        if len({value.lower() for value in names}) > 1:
++            ambiguities.append(
++                f"physical_site_id={physical_site_id}: multiple representative names in matched rows: {joined_unique(names)}"
++            )
++
++        lat_value = numeric_min(group[latitude_column]) if latitude_column else None
++        lon_value = numeric_min(group[longitude_column]) if longitude_column else None
++        if latitude_column and longitude_column:
++            latitudes = pd.to_numeric(group[latitude_column], errors="coerce")
++            longitudes = pd.to_numeric(group[longitude_column], errors="coerce")
++            if not latitudes.dropna().empty and not longitudes.dropna().empty:
++                if float(latitudes.max() - latitudes.min()) > 0.05 or float(longitudes.max() - longitudes.min()) > 0.05:
++                    ambiguities.append(
++                        f"physical_site_id={physical_site_id}: coordinate spread exceeds 0.05 degrees in matched rows"
++                    )
++
++        n_product_records = int(product_group["product_id"].nunique()) if "product_id" in product_group.columns else int(len(product_group))
++        n_rwl_products = count_product_type(product_group, "rwl")
++        n_crn_products = count_product_type(product_group, "crn")
++
++        physical_rows.append(
++            {
++                "physical_site_id": physical_site_id,
++                "representative_site_name": first_clean_value(group[name_column]) if name_column else "",
++                "country": first_clean_value(group[country_column]) if country_column else "Unknown",
++                "latitude": lat_value,
++                "longitude": lon_value,
++                "n_product_records": n_product_records,
++                "n_rwl_products": n_rwl_products,
++                "n_crn_products": n_crn_products,
++                "has_rwl": bool(n_rwl_products > 0),
++                "has_crn": bool(n_crn_products > 0),
++                "first_year_min": numeric_min(group[first_year_column]) if first_year_column else numeric_min(product_group["first_year"]) if "first_year" in product_group.columns else None,
++                "last_year_max": numeric_max(group[last_year_column]) if last_year_column else numeric_max(product_group["last_year"]) if "last_year" in product_group.columns else None,
++                "min_distance_to_feature_km": numeric_min(group[distance_column]) if distance_column else None,
++                "source_scope": joined_unique(source_scopes),
++                "source_name": joined_unique(source_names),
++            }
++        )
++
++    physical_sites = pd.DataFrame(physical_rows).sort_values("physical_site_id") if physical_rows else pd.DataFrame()
++    output_columns = [
++        "physical_site_id",
++        "representative_site_name",
++        "country",
++        "latitude",
++        "longitude",
++        "n_product_records",
++        "n_rwl_products",
++        "n_crn_products",
++        "has_rwl",
++        "has_crn",
++        "first_year_min",
++        "last_year_max",
++        "min_distance_to_feature_km",
++        "source_scope",
++        "source_name",
++    ]
++    for column in output_columns:
++        if column not in physical_sites.columns:
++            physical_sites[column] = pd.NA
++    physical_sites = physical_sites[output_columns]
++    physical_sites["country"] = physical_sites["country"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
++    physical_sites.to_csv(physical_sites_csv, index=False, encoding="utf-8")
++
++    country_counts = (
++        physical_sites["country"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown").value_counts().sort_index()
++        if not physical_sites.empty and "country" in physical_sites.columns
++        else pd.Series(dtype=int)
++    )
++
++    summary_rows = [
++        {"metric": "total matched product records", "value": int(len(matched_products))},
++        {"metric": "total matched physical locations", "value": int(len(physical_sites))},
++        {"metric": "physical locations with RWL", "value": int(physical_sites["has_rwl"].fillna(False).astype(bool).sum())},
++        {"metric": "physical locations with CRN", "value": int(physical_sites["has_crn"].fillna(False).astype(bool).sum())},
++        {"metric": "aggregation ambiguities", "value": int(len(ambiguities))},
++    ]
++    summary_rows.extend(
++        {"metric": f"physical locations in {country}", "value": int(count)}
++        for country, count in country_counts.items()
++    )
++    pd.DataFrame(summary_rows).to_csv(physical_summary_csv, index=False, encoding="utf-8")
++
++    return {
++        "total_matched_product_records": int(len(matched_products)),
++        "total_matched_physical_locations": int(len(physical_sites)),
++        "physical_locations_with_rwl": int(physical_sites["has_rwl"].fillna(False).astype(bool).sum()),
++        "physical_locations_with_crn": int(physical_sites["has_crn"].fillna(False).astype(bool).sum()),
++        "physical_site_country_counts": "; ".join(f"{country}: {count}" for country, count in country_counts.items()),
++        "physical_site_ambiguities": joined_unique(ambiguities, limit=20),
++        "physical_site_ambiguity_count": int(len(ambiguities)),
++    }
++
++
+ def write_text_summary(path: Path, summary: dict[str, object]) -> None:
+     lines = [
+         "Treequake Phase C Spatial Match Summary",
+@@ -200,6 +538,21 @@
+         f"Number with standard RWL: {summary['number_with_standard_rwl']}",
+         f"Number with CRN only: {summary['number_with_crn_only']}",
+     ]
++    if "total_matched_physical_locations" in summary:
++        lines.extend(
++            [
++                "",
++                "Physical-site aggregation",
++                f"Total matched product records: {summary['total_matched_product_records']}",
++                f"Total matched physical locations: {summary['total_matched_physical_locations']}",
++                f"Physical locations with RWL: {summary['physical_locations_with_rwl']}",
++                f"Physical locations with CRN: {summary['physical_locations_with_crn']}",
++                f"Physical locations by country: {summary['physical_site_country_counts']}",
++                f"Aggregation ambiguities: {summary['physical_site_ambiguity_count']}",
++            ]
++        )
++        if summary.get("physical_site_ambiguities"):
++            lines.extend(["Aggregation ambiguity details:", str(summary["physical_site_ambiguities"])])
+     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+ 
+ 
+@@ -269,12 +622,20 @@
+ 
+     matched_sites_csv = tables_dir / "matched_sites.csv"
+     file_index_csv = tables_dir / "matched_sites_file_index.csv"
++    physical_sites_csv = tables_dir / "matched_physical_sites.csv"
++    physical_summary_csv = tables_dir / "matched_physical_site_summary.csv"
+     summary_csv = tables_dir / "match_summary.csv"
+     matched_sites_gpkg = gis_dir / "matched_sites.gpkg"
+     analysis_polygons_gpkg = gis_dir / "analysis_polygons.gpkg"
+ 
+     matches.drop(columns="geometry", errors="ignore").to_csv(matched_sites_csv, index=False, encoding="utf-8")
+     matched_products.to_csv(file_index_csv, index=False, encoding="utf-8")
++    physical_site_summary = write_physical_site_outputs(
++        tables_dir=tables_dir,
++        matches=matches,
++        matched_products=matched_products,
++        site_key=site_key,
++    )
+     analysis_polygons.to_file(analysis_polygons_gpkg, layer="analysis_polygons", driver="GPKG", index=False)
+     matches.to_file(matched_sites_gpkg, layer="matched_sites", driver="GPKG", index=False)
+ 
+@@ -338,6 +699,7 @@
+         "number_with_standard_rwl": len(rwl_sites),
+         "number_with_crn_only": len(crn_sites - rwl_sites),
+     }
++    summary.update(physical_site_summary)
+ 
+     all_rows_layer = None
+     if "itrdb_sites_all_rows" in list_layers(sites_path):
+@@ -361,6 +723,8 @@
+         "features_layer": features_layer,
+         "sites_layer": sites_layer,
+         "all_rows_layer": all_rows_layer,
++        "matched_physical_sites": str(physical_sites_csv),
++        "matched_physical_site_summary": str(physical_summary_csv),
+         "created_at": datetime.now().isoformat(timespec="seconds"),
+     }
+     (run_dir / "config_used.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+@@ -374,6 +738,10 @@
+     print(f"Total site-feature matches: {summary['total_site_feature_matches']}")
+     print(f"Unique matched sites: {summary['unique_matched_sites']}")
+     print(f"Countries represented: {summary['countries_represented']}")
++    print(f"Matched physical locations: {summary['total_matched_physical_locations']}")
++    print(f"Physical locations with RWL: {summary['physical_locations_with_rwl']}")
++    print(f"Physical locations with CRN: {summary['physical_locations_with_crn']}")
++    print(f"Physical-site aggregation ambiguities: {summary['physical_site_ambiguity_count']}")
+ 
+ 
+ if __name__ == "__main__":
