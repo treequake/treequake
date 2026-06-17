@@ -1,24 +1,59 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+env/
+*.egg-info/
+
+# Secrets / local config
 .env
 .env.*
-.DS_Store
+*.pem
+*.key
+*.token
+credentials*
+secrets*
+config.local.*
+*_secret*
+*_secrets*
 
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# R
 .Rproj.user/
 .Rhistory
 .RData
 
+# Databases / generated files
 *.sqlite
 *.db
-
-data/raw/
-data/private/
 outputs/
 tmp/
 cache/
+logs/
 
+# Private/raw data
+data/raw/
+data/private/
+data/external/private/
+
+# Archives
 *.zip
 *.tar
 *.tar.gz
+*.7z
+
+# Geospatial data (keep private unless intentionally public)
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.qix
+*.sbn
+*.sbx

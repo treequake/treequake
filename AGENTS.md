@@ -1,21 +1,17 @@
 # TreeQuake Agent Instructions
 
-## Project
-TreeQuake is a research/code project for earthquake-tree/environmental analysis.
+Use this repository instead of the user's local machine.
 
-## Environment
-Assume Linux. Prefer Python unless otherwise specified.
+Repository:
+https://github.com/treequake/treequake
 
-## Rules
-- Do not modify raw/private data unless explicitly instructed.
-- Do not commit credentials, tokens, .env files, private corpora, or large generated outputs.
-- Keep analyses reproducible.
-- Clearly separate data-derived results from interpretations.
-- Preserve source fidelity: do not claim a source was used unless it was actually accessed.
+The path /home/if/Ricerca/treequake exists only on the user's computer.
 
-## Useful commands
-Before editing:
-git status
+Do not commit:
+- .venv
+- .env files
+- credentials
+- private/raw datasets
+- generated outputs
 
-After editing:
-git diff
+If data are missing, ask the user to upload them separately.
