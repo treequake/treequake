@@ -1,25 +1,35 @@
-# Python
-__pycache__/
-*.pyc
+# Python environments / caches
 .venv/
 venv/
 env/
+__pycache__/
+*.pyc
+*.pyo
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Secrets / local config
+# Secrets / credentials / local config
 .env
 .env.*
 *.pem
 *.key
 *.token
+*.cert
 credentials*
 secrets*
 config.local.*
 *_secret*
 *_secrets*
+*password*
+*passwd*
+*api_key*
+*apikey*
 
 # OS / editor
 .DS_Store
+Thumbs.db
 .vscode/
 .idea/
 
@@ -27,44 +37,63 @@ config.local.*
 .Rproj.user/
 .Rhistory
 .RData
+.Ruserdata
 
-# Databases / generated files
-*.sqlite
-*.db
-outputs/
-tmp/
-cache/
+# Logs, runs, generated outputs
 logs/
+log/
+runs/
+run/
+outputs/
+output/
+results/
+result/
+tmp/
+temp/
+cache/
+checkpoints/
+artifacts/
+products/
 
-# Private/raw data
-data/raw/
-data/private/
-data/external/private/
+# All data should be local-only for now
+data/
+catalogs/**/*.csv
+catalogs/**/*.tsv
+catalogs/**/*.json
+catalogs/**/*.jsonl
+catalogs/**/*.geojson
+catalogs/**/*.gpkg
+catalogs/**/*.shp
+catalogs/**/*.shx
+catalogs/**/*.dbf
+catalogs/**/*.prj
+catalogs/**/*.cpg
+catalogs/**/*.sqlite
+catalogs/**/*.db
+catalogs/**/*.parquet
+catalogs/**/*.feather
+catalogs/**/*.pkl
+catalogs/**/*.pickle
 
-# Local workflow/private notes
-metadata explanation of workflow.odt
+# Provider/raw/downloaded data
+scripts/python/providers/**/raw/
+scripts/python/providers/**/merged/
+scripts/python/providers/**/state/
+scripts/python/providers/**/downloads/
+scripts/python/providers/**/cache/
 
-# Generated geospatial outputs
-catalogs/normalized/*.gpkg
+# Specific known local data/product directories
+catalogs/provided/
+catalogs/normalized/
+agent_code_dump/
 
 # Archives
 *.zip
 *.tar
 *.tar.gz
+*.tgz
 *.7z
-.venv/
-data/raw/
-data/processed/
-outputs/
-catalogs/normalized/
-__pycache__/
-*.pyc
-*.gpkg-shm
-*.gpkg-wal
+*.rar
 
-# DISS data kept local, not public
-catalogs/provided/lines/diss/
-
-# Local spatial data not public
-catalogs/provided/lines/diss/
-catalogs/normalized/*.gpkg
+# Local workflow/private notes
+metadata explanation of workflow.odt
