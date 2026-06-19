@@ -61,3 +61,6 @@ __pycache__/
 *.pyc
 *.gpkg-shm
 *.gpkg-wal
+
+# DISS data kept local, not public
+catalogs/provided/lines/diss/
