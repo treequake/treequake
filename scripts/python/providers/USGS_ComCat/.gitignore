@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+raw/*.csv
+raw/*.part
+logs/*.log
+state/*.json
+state/*.part
+merged/*.csv
